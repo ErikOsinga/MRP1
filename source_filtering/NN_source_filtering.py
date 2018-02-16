@@ -62,7 +62,6 @@ def PositionAngle(ra1,dec1,ra2,dec2):
 			math.cos(dec1)*math.tan(dec2)-math.sin(dec1)*math.cos(ra2-ra1))
 				)* 180. / math.pi )# convert radians to degrees
 
-
 def load_in(nnpath,*arg):
 	'''
 	Is used to load in columns from nnpath Table,
@@ -93,7 +92,7 @@ def rotate_point(origin,point,angle):
 	px,py = point
 
 	qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py-oy)
-	qy = oy + math.sin(angle) * (px - ox) - math.cos(angle) * (py-oy)
+	qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py-oy)
 	return qx,qy
 
 def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),plot=False,head=None,hdulist=None):
@@ -255,13 +254,12 @@ def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),p
 	# 80 per cent of the peak average flux
 	err_orientations = np.where(all_values > (0.8 * max_value))[0]
 	
-	# find the cutoff value, dependent on the distance, should think about wheter i want to use Maj
+	# find the cutoff value, dependent on the distance, should think about whether i want to use Maj
 	cutoff = 2*np.arctan((maj/60.)/nn_dist) * 180 / np.pi # convert rad to deg
 	if len(err_orientations) > cutoff:
 		classification = 'Large err'
 	else:
 		classification = 'Small err'
-
 
 
 	# then find the amount of maxima and the lobe_ratio
@@ -635,7 +633,7 @@ def filter_NN(cutoff=1):
 	t2.sort('Index')
 	t2.write('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical2_singles.fits',overwrite=True)
 
-def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=False,p=3):
+def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=False,p=2):
 	'''
 	This function is faster than the other NN-function with the same functionality. 
 	
@@ -644,24 +642,29 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 	Iteration is 1 for the first NN search and 2 for the NN search after the cutoff
 	distance
 
-	It computes the nearest neighbour using spherical distance if p=3
-	and the Euclidian distance if p=2. Writes to a file if write=True
+	It computes the nearest neighbour using the Euclidian distance between the points converted
+	to a cartesian system. When the nearest neighbour is found, it computes spherical distance.
+
+	Writes to a file if write=True
 
 	Output: three arrays, one with the distance, one with the RA and one with the DEC of the NN
 	The distance is given in arcminutes
 	'''
 	
-	#convert RAs and DECs to an array that has following layout: [[ra1,dec1],[ra2,dec2],etc]
-	coordinates = np.vstack((RAs,DECs)).T
+	#convert RAs and DECs to an array that has following layout: [[x1,y1,z1],[x2,y2,z2],etc]
+	x = np.cos(np.radians(RAs)) * np.cos(np.radians(DECs))
+	y = np.sin(np.radians(RAs)) * np.cos(np.radians(DECs))
+	z = np.sin(np.radians(DECs))
+	coordinates = np.vstack((x,y,z)).T
 
 	#make a KDTree for quick NN searching	
-	import ScipySpatialckdTree
-	coordinates_tree = ScipySpatialckdTree.KDTree_plus(coordinates,leafsize=16)
+	from scipy.spatial import cKDTree
+	coordinates_tree = cKDTree(coordinates,leafsize=16)
 	TheResult_distance = []
 	TheResult_RA = []
 	TheResult_DEC = []
 	TheResult_index = []
-	for item in coordinates:
+	for i,item in enumerate(coordinates):
 		'''
 		Find 2nd closest neighbours, since the 1st is the point itself.
 
@@ -671,11 +674,12 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 		We then compute the spherical distance between the item and the 
 		closest neighbour.
 		'''
-		# print coordinates_tree.query(item,k=2,p=3)
-		index=coordinates_tree.query(item,k=2,p=p)[1][1]
-		nearestN = coordinates[index]
-		distance = distanceOnSphere(nearestN[0],nearestN[1],#coordinates of the nearest
-								item[0],item[1])*60 #coordinates of the current item
+		# print coordinates_tree.query(item,k=2,p=2)
+		index=coordinates_tree.query(item,k=2,p=2,n_jobs=-1)[1][1]
+		nearestN = [RAs[index],DECs[index]]
+		source = [RAs[i],DECs[i]]
+		distance = distanceOnSphere(nearestN[0],nearestN[1],#RA,DEC coordinates of the nearest
+								source[0],source[1])*60 #RA,DEC coordinates of the current item
 		# print distance/60
 		TheResult_distance.append(distance)	
 		TheResult_RA.append(nearestN[0])
@@ -715,7 +719,6 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 		So you can compare the NN_index with Index and new_NN_index with new_Index
 		'''
 	return TheResult_distance,TheResult_RA, TheResult_DEC
-
 
 
 

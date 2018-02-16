@@ -1,25 +1,37 @@
 import sys
 sys.path.insert(0, '/data1/osinga/anaconda2')
 import numpy as np 
+import numexpr as ne
+import math
 
 from astropy.io import fits
-import matplotlib.pyplot as plt
-from scipy import constants as S
-from astropy.table import Table, join, vstack
 from astropy.io import ascii
-from shutil import copy2
+from astropy.table import Table, join, vstack
+
+from scipy import constants as S
+from scipy.spatial import cKDTree
 from scipy.stats import norm
+
+from shutil import copy2
+
+import matplotlib.pyplot as plt
 import matplotlib.mlab as mlab
 
-import seaborn as sns
-sns.set()
-plt.rc('text', usetex=True)
+# import seaborn as sns
+# sns.set()
+# plt.rc('text', usetex=True)
+
+from utils import angular_dispersion_vectorized_n, load_in, distanceOnSphere
+from utils_orientation import find_orientationNN, find_orientationMG
+
+import difflib
+
+import pyfits as pf
 
 # import treecorr
-import math
+
+
 file = 'P173+55'
-
-
 prefix = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'
 filename1 = prefix + file + '/mosaic.fits'
 # hdu_list = fits.open(filename1)
@@ -37,23 +49,6 @@ FieldNames = [
 	'P15Hetdex13', 'P22Hetdex04', 'P19Hetdex17', 'P23Hetdex20', 'P18Hetdex03', 'P39Hetdex19', 'P223+52',
 	'P221+47', 'P223+50', 'P219+52', 'P213+47', 'P225+47', 'P217+47', 'P227+50', 'P227+53', 'P219+50'
  ]
-
-
-def load_in(nnpath,*arg):
-	'''
-	Is used to load in columns from nnpath Table,
-	*arg is a tuple with all the arguments (columns) given after nnpath
-	returns the columns as a tuple of numpy arrays
-	'''
-
-	nn1 = fits.open(nnpath)
-	nn1 = Table(nn1[1].data)
-
-	x = (np.asarray(nn1[arg[0]]),)
-	for i in range (1,len(arg)):
-		x += (np.asarray(nn1[arg[i]]),)
-
-	return x
 
 def plot_hist(normed=False,fit=False):
 	'''
@@ -545,9 +540,9 @@ def copy_cut_NN():
 	print (lobe_ratio_small_two_maxima,lobe_ratio_big_two_maxima,lobe_ratio_small_more_maxima,lobe_ratio_big_more_maxima)
 
 def select_all_interesting():
-	'''
+	"""
 	Function to select all sources in the leaves of the tree, so with err < 15 or lobe ratio < 2 etc
-	'''
+	"""
 
 	dataNN = fits.open('/data1/osinga/data/NN/try_4/all_NN_sources.fits')
 	dataNN = Table(dataNN[1].data)
@@ -586,7 +581,7 @@ def hist_PA(tdata,normed=False,fit=False):
 	position_angles = tdata['position_angle']
 	n, bins, patches = ax.hist(position_angles,bins=nbins,normed=normed,label='Postion Angle')
 	# add a normal distribution fit line by computing mean and stdev
-	(mu,sigma) = norm.fit(position_angles)
+	# (mu,sigma) = norm.fit(position_angles)
 	print 'Mean of the data: {}  \nStandard deviation of the data {} '.format(mu,sigma)
 	if fit==True:
 		if normed == True:
@@ -633,7 +628,8 @@ def KuiperTest(tdata):
 	# for normalising the histogram, weighing each bin with the number of values
 	# weights = np.asarray(np.ones_like(position_angles)/float(len(position_angles)))
 	n, bins, patches = plt.hist(position_angles,bins=nbins,normed=True,
-		label='Postion Angle')#, weights = weights)
+		label='Postion Angle')#, weights = weights) # I believe its not necessary
+													# when binwidth = 1
 	pdf = n
 	cdf = np.cumsum(pdf)
 	# print cdf
@@ -675,6 +671,29 @@ def angular_size(tdataNN,tdataMG):
 	plt.show()
 
 	print np.median(n)
+
+def histedges_equalN(x, nbin):
+	"""
+ 	Make nbin equal height bins
+ 	Call plt.hist(x, histedges_equalN(x,nbin))
+	"""
+	npt = len(x)
+	return np.interp(np.linspace(0,npt,nbin+1),
+					np.arange(npt),
+					np.sort(x))
+
+def flux_hist(tdata):
+	"""
+	Makes a histogram of the flux distribution of the sources
+	"""
+
+	peak_flux = tdata['Peak_flux']
+	print plt.hist(peak_flux,histedges_equalN(peak_flux,3))
+
+	plt.title('Flux distribution | no. of sources: ' + str(len(tdata)))
+	plt.xlabel('Peak flux (Jy/beam)')
+	plt.ylabel('Count')
+	plt.show()
 
 def correlation_funct(tdata,kappa=False):
 	'''
@@ -761,226 +780,362 @@ def random_data(tdata):
 	rdata['position_angle'] = np.random.randint(minpa,maxpa,length)
 	return rdata
 
-def inner_product(alpha1,alpha2):
-	'''
-	Returns the inner product of position angles alpha1 and alpha2
-	The inner product is defined in Jain et al. 2014
-	
-	Assumes input is given in degrees
-	+1 indicates parallel -1 indicates perpendicular
-	'''
-	alpha1, alpha2 = math.radians(alpha1), math.radians(alpha2)
-	return math.cos(2*(alpha1-alpha2))
-
-def distanceOnSphere(RAs1, Decs1, RAs2, Decs2):
-	"""
-	Credits: Martijn Oei, uses great-circle distance
-
-	Return the distances on the sphere from the set of points '(RAs1, Decs1)' to the
-	set of points '(RAs2, Decs2)' using the spherical law of cosines.
-
-	It assumes that all inputs are given in degrees, and gives the output in degrees, too.
-
-	Using 'numpy.clip(..., -1, 1)' is necessary to counteract the effect of numerical errors, that can sometimes
-	incorrectly cause '...' to be slightly larger than 1 or slightly smaller than -1. This leads to NaNs in the arccosine.
-	"""
-
-	return np.degrees(np.arccos(np.clip(
-	np.sin(np.radians(Decs1)) * np.sin(np.radians(Decs2)) +
-	np.cos(np.radians(Decs1)) * np.cos(np.radians(Decs2)) *
-	np.cos(np.radians(RAs1 - RAs2)), -1, 1)))
-
 def angular_dispersion(tdata,n=20):
 	'''
 	Calculates and returns the Sn statistic for tdata
 	with number of sources n closest to source i
 	
-	# n = number of sources closest to source i
+	# n = number of sources closest to source i, including itself
+	# e.g. n=5 implies 4 nearest neighbours
 	# N = number of sources
+
+	Returns Sn, as a float.
+
+	DEPRECATED> NEEDS FIXING. REMOVE ANGLE FROM CALCULATION 
+							AND REMOVE SOME MATRICES ALLTOGETHER
 	
 	'''
 	N = len(tdata)
 	RAs = np.asarray(tdata['RA'])
 	DECs = np.asarray(tdata['DEC'])
 	position_angles = np.asarray(tdata['position_angle'])
+	angles = 180 # maximize dispersion for an angle between 0 and 180
 
-	#convert RAs and DECs to an array that has following layout: [[ra1,dec1],[ra2,dec2],etc]
-	coordinates = np.vstack((RAs,DECs)).T
+	#convert RAs and DECs to an array that has following layout: [[x1,y1,z1],[x2,y2,z2],etc]
+	x = np.cos(np.radians(RAs)) * np.cos(np.radians(DECs))
+	y = np.sin(np.radians(RAs)) * np.cos(np.radians(DECs))
+	z = np.sin(np.radians(DECs))
+	coordinates = np.vstack((x,y,z)).T
+
 	#make a KDTree for quick NN searching	
-	import ScipySpatialckdTree
-	coordinates_tree = ScipySpatialckdTree.KDTree_plus(coordinates,leafsize=16)
+	from scipy.spatial import cKDTree
+	coordinates_tree = cKDTree(coordinates,leafsize=16)
+	
+	# for every source: find n closest neighbours, calculate max dispersion
+	all_vectorized = [] # array of shape (N,180,n) which contains all angles used for all sources
+	position_angles_array = np.zeros((N,n)) # array of shape (N,n) that contains position angles
+	thetas = np.array(range(0,angles)).reshape(angles,1) # for checking angle that maximizes dispersion
+	for i in range(N):
+		index_NN = coordinates_tree.query(coordinates[i],k=n,p=2,n_jobs=-1)[1]
+		position_angles_array[i] = position_angles[index_NN] 
+		all_vectorized.append(thetas - position_angles_array[i])
+	all_vectorized = np.array(all_vectorized)
 
-	d_max = 0
-	i_max = 0
-	# for i-th source (item) find n closest neighbours
-	di_max_set = []
-	thetha_max_set = []
-	for i, item in enumerate(coordinates):
-		# stores the indices of the n nearest neighbours as an array (including source i)
-		# e.g. the first source has closest n=2 neighbours:  ' array([0, 3918, 3921]) '
-		indices=coordinates_tree.query(item,k=n+1,p=3)[1]
-		#coordinates of the n closest neighbours
-		nearestN = coordinates[indices]
-		nearestRAs = nearestN[:,0]
-		nearestDECs = nearestN[:,1]
-		# distance in arcmin
-		# distance = distanceOnSphere(nearestRAs,nearestDECs,#coordinates of the nearest
-		# 						item[0],item[1])*60 #coordinates of the current item
-		max_di = 0
-		max_theta =  0
-		# find the angle for which the dispersion is maximized
-		for theta in range(0,180):
-			sum_inner_product = 0
-			for j in indices:
-				sum_inner_product += inner_product(theta,position_angles[j])
-			dispersion = 1./n * sum_inner_product
-			# should maximalize d_i for theta
-			if dispersion > max_di:
-				max_di = dispersion
-				max_theta = theta
+	assert all_vectorized.shape == (N,angles,n)
 
-		thetha_max_set.append(max_theta)
-		di_max_set.append(max_di)
+	sum_inner_products = np.sum( np.cos(np.radians(2*all_vectorized)), axis=2)
 
-		# sum_inner_product_cos = 0
-		# sum_inner_product_sin = 0
-		# for j in indices:
-		# 	sum_inner_product_cos += math.cos(2*math.radians(position_angles[j]))
-		# 	sum_inner_product_sin += math.sin(2*math.radians(position_angles[j]))
-		# di_max = np.abs(max_di - 1./n * (sum_inner_product_cos**2 + sum_inner_product_sin**2)**(1./2))
+	assert sum_inner_products.shape == (N,angles)
 
-	# Sn measures the average position angle dispersion of the sets containing every source
-	# and its n neighbours. If the condition N>>n>>1 is statisfied then Sn is expected to be
-	# normally distributed (Contigiani et al.) 
-	Sn = 1./N * np.sum(np.asarray(di_max_set))
+	max_di = 1./n * np.max(sum_inner_products,axis=1) 
+	max_theta = np.argmax(sum_inner_products,axis=1)
 
-	#from scipy.stats import norm
-	#Sn_mc = fits.open('/data1/osinga/data/monte_carlo_Sn.fits') # n = 20
-	#Sn_mc = Table(Sn_mc[1].data)
-	#sigma = (0.33/N)**0.5
-	#SL = 1 - norm.cdf(   (Sn - np.average(np.asarray(Sn_mc['Sn']))) / sigma   )
-	# SL = 1 - cdfnorm( (Sn - Snmc) / sigma )
+	assert max_di.shape == (N,) # array of max_di for every source
+	assert max_theta.shape == (N,) # array of max_theta for every source
 
-	return Sn # , SL
+	Sn = 1./N * np.sum(max_di)
 
-def monte_carlo(tdata,totally_random=True):
-	'''
-	Make 1000 random data sets and calculate the Sn statistic
+	''' This was to check the d_i max function, it produces the same d_i max
+		But you do not know the 'mean angle' '''
+	# sum_inner_product_cos = 0
+	# sum_inner_product_sin = 0
+	# for j in indices:
+	# 	sum_inner_product_cos += math.cos(2*math.radians(position_angles[j]))
+	# 	sum_inner_product_sin += math.sin(2*math.radians(position_angles[j]))
+	# di_max = np.abs(max_di - 1./n * (sum_inner_product_cos**2 + sum_inner_product_sin**2)**(1./2))
 
-	If totally_random, then generate new positions and position angles instead
-	of shuffeling the position angles among the sources
-	'''
-	ra = np.asarray(tdata['RA'])
-	dec = np.asarray(tdata['DEC'])
-	pa = np.asarray(tdata['position_angle'])
-	length = len(tdata)
-
-	max_ra = np.max(ra)
-	min_ra = np.min(ra)
-	max_dec = np.max(dec)
-	min_dec = np.min(dec)
-
-	for n in range(15,81):
-		Sn_datasets = []
-		print 'Starting 1000 monte carlo simulations with n = '+ str(n) + '..'
-		for dataset in range(0,1000):
-			rdata = Table()
-			if totally_random:
-				rdata['RA'] = (max_ra - min_ra) * np.random.random_sample(length) + min_ra
-				rdata['DEC'] = (max_dec - min_dec) * np.random.random_sample(length) + min_dec
-				rdata['position_angle'] = 180 * np.random.random_sample(length)
-			else:
-				np.random.shuffle(pa)
-				rdata['RA'] = ra
-				rdata['DEC'] = dec
-				rdata['position_angle'] = pa
-
-			Sn = angular_dispersion(rdata,n=n)
-			Sn_datasets.append(Sn)
-
-
-
-		Sn_datasets = np.asarray(Sn_datasets)
-		temp = Table()
-		temp['Sn'] = Sn_datasets
-		if totally_random:
-			temp.write('./TR_Sn_monte_carlo_n='+str(n)+'.fits',overwrite=True)
-		else:
-			temp.write('./Sn_monte_carlo_n='+str(n)+'.fits',overwrite=True)
-
-		# print np.average(Sn_datasets)
+	return Sn
 
 def Sn_vs_n(tdata):
-	path = '/data1/osinga/data/monte_carlo/results/'
-	n_range = range(30,81)
-	from scipy.stats import norm
-	all_sn = []
-	all_sn_mc = []
-	all_sl = []
-	N = len(tdata)
-	sigma = (0.33/N)**0.5
-	for n in n_range:
-		print 'Now doing n = ', n , '...'
-		Sn_montecarlo = fits.open(path+'Sn_monte_carlo_n='+str(n)+'.fits')
-		Sn_montecarlo = Table(Sn_montecarlo[1].data)
-		Sn_montecarlo = np.average(np.asarray(Sn_montecarlo['Sn']))
-		Sn_data = angular_dispersion(tdata,n=n)
-		SL = 1 - norm.cdf(   (Sn_data - Sn_montecarlo) / (sigma)   )
-		all_sn.append(Sn_data)
-		all_sl.append(SL)
-		all_sn_mc.append(Sn_montecarlo)
-	
-	Results = Table()
-	Results['n'] = n_range
-	Results['Sn_data'] = all_sn
-	Results['SL'] = all_sl
-	Results['Sn_mc'] = all_sn_mc
-	Results.write('/data1/osinga/data/Statistics_results.fits',overwrite=True)
-	
-	plt.plot(n_range,np.log10(all_sl))
-	plt.ylabel('Log SL')
-	plt.xlabel('n')
-	plt.savefig('/data1/osinga/figures/SL_vs_n.png')
-	
+	print 'See quick_plot.py'
 
 def alot_of_histograms(tdata):
+	'''
+	Calculate the histograms for n = 30 to n = 80 for the Monte Carlo simulations
+	'''
+
 	n_range = range(30,81)
-	path = '/data1/osinga/data/monte_carlo/results/'
-	Sn_data = fits.open('/data1/osinga/data/Statistics_results.fits')
+	path = '/net/zegge/data1/osinga/montecarlo_TR/'
+	Sn_data = fits.open('/data1/osinga/data/Statistics_results_TR.fits')
 	Sn_data = Table(Sn_data[1].data)
 	for n in n_range:
 		print n
-		Sn_montecarlo = fits.open(path+'Sn_monte_carlo_n='+str(n)+'.fits')
+		Sn_montecarlo = fits.open(path+'TR_Sn_monte_carlo_n='+str(n)+'.fits')
 		Sn_montecarlo = Table(Sn_montecarlo[1].data)
 		Sn_montecarlo = (np.asarray(Sn_montecarlo['Sn']))
 		# Sn_data = angular_dispersion(tdata,n=n)
 		Sn = Sn_data['Sn_data'][Sn_data['n'] == n]
 		plt.hist(Sn_montecarlo)
 		plt.axvline(Sn)
-		plt.savefig('/data1/osinga/figures/statistics/Sn_histograms/n='+str(n)+'.png')
+		plt.savefig('/data1/osinga/figures/statistics/Sn_histograms/TR/n='+str(n)+'.png')
 		plt.close()
+
+def angular_radius_vs_n(tdata):
+	print 'see quick_plot.py'
+
+def select_size_bins(dataNN,dataMG):
+	"""
+	Makes three size bins from the table tdata, defined as follows
+
+	Bin small: 0 to 20 arcsec.
+	Bin medium: 20 to 50 arcsec.
+	Bin large: 50+ arcsec.
+
+	Arguments:
+	tdata -- Astropy Table containing the data
+
+	Returns:
+	small, medium, large -- Three tables containing the selected sources
+	"""
+	
+	NNsize = np.asarray(dataNN['new_NN_distance(arcmin)'] * 60) # arcminutes to arcseconds
+	MGsize = np.asarray(dataMG['Maj'] * 2) # in arcseconds
+	# all_sizes = np.append(NNsize,MGsize)
+
+	small = vstack([dataNN[NNsize < 20],dataMG[MGsize < 20]])
+	medium = vstack([dataNN[(20<NNsize)&(NNsize<50)],dataMG[(20<MGsize)&(MGsize<50)]])
+	large = vstack([dataNN[NNsize>50],dataMG[MGsize>50]])
+
+	assert len(small)+len(medium)+len(large) == len(dataNN) + len(dataMG)
+
+	return small, medium, large
+	
+def select_size_bins2(dataNN,dataMG,Write=False):
+	"""
+	Makes 5 size bins from the table tdata, equal frequency.
+
+	[   1.73503268   25.24703724   33.08347987   42.40452224   54.21193253
+  	390.70290048]
+
+	Arguments:
+	tdata -- Astropy Table containing the data
+
+	Returns:
+	A dictionary {'0':bin1, ...,'4':bin5) -- 5 tables 
+											containing the selected sources in each bin
+	"""
+
+	tdata = vstack([dataNN,dataMG])
+	NNsize = np.asarray(dataNN['new_NN_distance(arcmin)'] * 60) # arcminutes to arcseconds
+	MGsize = np.asarray(dataMG['Maj'] * 2) # in arcseconds
+	all_sizes = np.append(NNsize,MGsize)
+
+	n, bins, patches = plt.hist(all_sizes,histedges_equalN(all_sizes,5))
+	print bins
+
+	a = dict() #a['0'] is the first bin, etc.
+	for i in range(len(bins)-1):
+		a[str(i)] = tdata[(bins[i]<all_sizes)&(all_sizes<bins[i+1])]
+
+
+	if Write:
+		for i in range(len(a)):
+			a[str(i)].write('./size_bins2_'+str(i)+'.fits',overwrite=True)
+
+	return a
+
+def select_flux_bins2(tdata,Write=False):
+	"""
+	Makes 5 flux bins from the table tdata, equal frequency.
+
+	[  7.22352897e-02   8.83232569e-01   1.61426015e+00   3.27119503e+00
+ 	  1.13179333e+01   4.82002807e+03]
+
+	Arguments:
+	tdata -- Astropy Table containing the data
+
+	Returns:
+	A dictionary {'0':bin1, ...,'4':bin5) -- 5 tables 
+											containing the selected sources in each bin
+	"""
+
+	peak_flux = tdata['Peak_flux']
+	n , bins , patches = plt.hist(peak_flux,histedges_equalN(peak_flux,5))
+	print bins
+
+	a = dict() #a['0'] is the first bin, etc.
+	for i in range(len(bins)-1):
+		a[str(i)] = tdata[(bins[i]<peak_flux)&(peak_flux<bins[i+1])]
+
+	if Write:	
+		for i in range(len(a)):
+			a[str(i)].write('./flux_bins2_'+str(i)+'.fits',overwrite=True)
+
+	return a
+	
+def select_size_bins3(dataMG,Write=False):
+	"""
+	Makes 5 size bins from the dataMG, equal freq.
+
+	Arguments:
+	dataMG -- Astropy Table containing the data for the MG sources
+
+	Returns:
+	A dictionary {'0':bin1, ...,'4':bin5) -- 5 tables 
+											containing the selected sources in each bin
+	"""
+	MGsize = np.asarray(dataMG['Maj'] * 2) # in arcseconds
+	
+	n, bins, patches = plt.hist(MGsize,histedges_equalN(MGsize,5))
+	print bins
+	
+	a = dict()
+	for i in range(len(bins)-1): 
+		a[str(i)] = dataMG[(bins[i]<MGsize)&(MGsize<bins[i+1])]		
+
+	if Write:
+		for i in range(len(a)):
+			a[str(i)].write('./size_bins3_'+str(i)+'.fits')
+
+	return a
+
+def select_flux_bins3(dataMG,Write=False):
+	"""
+	Makes 5 flux bins from the dataMG, equal freq.
+
+	Arguments:
+	dataMG -- Astropy Table containing the data for the MG sources
+
+	Returns:
+	A dictionary {'0':bin1, ...,'4':bin5) -- 5 tables 
+											containing the selected sources in each bin
+	"""
+	MGflux = np.asarray(dataMG['Peak_flux']) 
+	
+	n, bins, patches = plt.hist(MGflux,histedges_equalN(MGflux,5))
+	print bins
+	
+	a = dict()
+	for i in range(len(bins)-1): 
+		a[str(i)] = dataMG[(bins[i]<MGflux)&(MGflux<bins[i+1])]		
+
+	if Write:
+		for i in range(len(a)):
+			a[str(i)].write('./flux_bins3_'+str(i)+'.fits')
+
+	return a
+
+def show_overlap(tdata):
+	"""
+	Function to show overlapping sources due to selection from NN and then 
+	selection from MG, some MG sources might be also in NN.
+	"""
+
+	source_names, counts = np.unique(tdata['Source_Name'],return_counts=True)
+	# array with the non-unique source names
+	source_names = source_names[counts>1] 
+
+	Source_Data = '/data1/osinga/data/biggest_selection.fits'
+	Source_Name, Mosaic_ID = load_in(Source_Data,'Source_Name', 'Mosaic_ID')
+	RA, DEC, NN_RA, NN_DEC, NN_dist, Total_flux, E_Total_flux, new_NN_index, Maj, Min = (
+		load_in(Source_Data,'RA','DEC','new_NN_RA','new_NN_DEC','new_NN_distance(arcmin)'
+			,'Total_flux', 'E_Total_flux','new_NN_index','Maj', 'Min') )
+	
+
+	for i in range(len(source_names)):
+		nonunique = np.where(tdata['Source_Name'] == source_names[i])
+		i = nonunique[0][0] # NN source 
+		j = nonunique[0][1] # MG source
+
+		# workaround since the string is cutoff after 8 characters...
+		MosaicID = difflib.get_close_matches(Mosaic_ID[i],FieldNames,n=1)[0]
+		# check to see if difflib got the right string		
+		trying = 1
+		while MosaicID[:8] != Mosaic_ID[i]:
+			trying +=1
+			MosaicID = difflib.get_close_matches(Mosaic_ID[i],FieldNames,n=trying)[trying-1]
+
+		source = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'+MosaicID+'/mosaic.fits'
+		head = pf.getheader(source)
+		hdulist = pf.open(source)
+		print Source_Name[i]
+		print Source_Name[j]
+
+		find_orientationNN(i,'',RA[i],DEC[i],NN_RA[i],NN_DEC[i],NN_dist[i],Maj[i],(3/60.),plot=True,head=head,hdulist=hdulist)
+
+		find_orientationMG(j,'',RA[j],DEC[j],Maj[j],Min[j],(3/60.),plot=True,head=head,hdulist=hdulist)
+
+def deal_with_overlap(tdata):
+	"""
+	If there are non-unique sources in tdata, remove the NN source from the data.
+
+	Non-unique sources show up because we select first on NN and then on the MG 
+	but this might cause overlap between the two..
+	"""
+
+	source_names, counts = np.unique(tdata['Source_Name'],return_counts=True)
+	# array with the non-unique source names
+	source_names = source_names[counts>1] 
+	drop_rows = []
+	for i in range(len(source_names)):
+		nonunique = np.where(tdata['Source_Name'] == source_names[i])
+		i = nonunique[0][0] # NN source 
+		j = nonunique[0][1] # MG source
+		drop_rows.append(i)
+
+	tdata.remove_rows(drop_rows)
+
+	return tdata
+
+def make_bins():
+	"""
+	Calls the select_size_bins2 and select_flux_bins2 and produces the .fits files
+	Deals with overlap. 
+	"""
+	dataNN,dataMG = select_all_interesting()
+	tdata = vstack([dataNN,dataMG])
+
+	a = select_size_bins2(dataNN,dataMG,Write=True)
+	a = select_flux_bins2(tdata,Write=True)
+
+	for i in range(5):
+		size_data = Table(fits.open('./size_bins2_'+str(i)+'.fits')[1].data)
+		flux_data = Table(fits.open('./flux_bins2_'+str(i)+'.fits')[1].data)
+
+		size_data = deal_with_overlap(size_data)
+		flux_data = deal_with_overlap(flux_data)
+
+		size_data.write('./size_bins2_'+str(i)+'.fits',overwrite=True)
+		flux_data.write('./flux_bins2_'+str(i)+'.fits',overwrite=True)
+
 
 
 
 dataNN,dataMG = select_all_interesting()
 tdata = vstack([dataNN,dataMG])
-alot_of_histograms(tdata)
+
+# file = '/data1/osinga/data/flux_bins2/flux_bins2_4.fits'  #'/data1/osinga/data/biggest_selection.fits'
+# fluxdata = Table(fits.open(file)[1].data)
+
+tdata2 = deal_with_overlap(tdata)
+
+# make_bins()
+
+# select_size_bins3(dataMG,)
+# select_flux_bins3(dataMG,)
+
+# KuiperTest(dataMG)
+
+# flux_hist(tdata)
+
+
+# small, medium, large = select_size_bins(dataNN,dataMG)
+# small.write('./small_selection.fits')
+# medium.write('./medium_selection.fits')
+# large.write('./large_selection.fits')
+
+
+# print angular_dispersion(tdata)
+# alot_of_histograms(tdata)
+
+# sdata = select_on_size(tdata,cutoff=30)
 
 
 
-#print angular_dispersion(tdata)
 
-
-
-
-
-# monte_carlo(tdata)
-# correlation_funct(random_data(tdata),kappa=False)
 
 # angular_size(dataNN,dataMG)
 
-
-# KuiperTest(tdata)
 # hist_PA(tdata,normed=False,fit=False)
 
 # print copy_cut_NN()
@@ -988,12 +1143,5 @@ alot_of_histograms(tdata)
 
 # print copy_cut_multi_gauss()
 
-
-
 # for plotting a histogram of NN distance
 # plot_hist()
-
-
-
-
-

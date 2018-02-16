@@ -88,7 +88,7 @@ def rotate_point(origin,point,angle):
 	px,py = point
 
 	qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py-oy)
-	qy = oy + math.sin(angle) * (px - ox) - math.cos(angle) * (py-oy)
+	qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py-oy)
 	return qx,qy
 
 def postage(fitsim,postfits,ra,dec, s,NN_RA = None,NN_DEC = None):
@@ -313,7 +313,7 @@ def find_orientation(i,fitsim,ra,dec, Maj, Min, s = (3/60.),plot=False,head=None
 	from astropy.nddata.utils import extract_array
 	data_array = extract_array(hdulist[0].data,(yu-yl,xu-xl),(y,x))
 
-	# use a radius for the line that is the major axis, 
+	# use a radius for the line that is the semimajor axis, 
 	# but with 2 pixels more added to the radius
 	# to make sure we do capture the whole source
 	radius = Maj / 60.  * 40. #arcsec -- > arcmin --> image units
