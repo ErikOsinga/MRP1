@@ -11,11 +11,13 @@ import matplotlib.pyplot as plt
 import os
 import math
 
-file = 'P173+55'
 
+'''
+This script uses LOFAR_HBA_T1_DR1_catalog_v0.9.srl.fixed.fits
+'''
 
-prefix = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'
-filename1 = prefix + file + '/mosaic.fits'
+# prefix = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'
+# filename1 = prefix + file + '/mosaic.fits'
 # hdu_list = fits.open(filename1)
 # image_data = hdu_list[0].data 
 # header = hdu_list[0].header
@@ -95,7 +97,7 @@ def rotate_point(origin,point,angle):
 	qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py-oy)
 	return qx,qy
 
-def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),plot=False,head=None,hdulist=None):
+def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, Min, nn_Min, s = (3/60.),plot=False,head=None,hdulist=None):
 	'''	
 	Finds the orientation of NN
 
@@ -111,7 +113,9 @@ def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),p
 
 	ra, dec: the ra and dec of the source
 
-	Maj: the major axis of the source // TO-BE
+	Min: the semiminor axis of the source 
+
+	nn_Min: the semiminor axis of the nearest neighbour
 
 	s: the width of the image, default 3 arcmin, because it has to be a tiny bit
 	lower than the postage created earlier (width 4 arcmin) or NaNs will appear in the image
@@ -205,7 +209,7 @@ def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),p
 		elif s == (2/60.):
 			print "Nan in the cutout image AGAIN ", head['OBJECT'], ' i = ' , i
 			try: 
-				return find_orientation(i,fitsim,ra,dec,nn_ra,nn_dec,nn_dist,maj,s=(2*radius+2)/40./60.,plot=plot,head=head,hdulist=hdulist)
+				return find_orientation(i,fitsim,ra,dec,nn_ra,nn_dec,nn_dist,Min,nn_Min,s=(2*radius+2)/40./60.,plot=plot,head=head,hdulist=hdulist)
 			except RuntimeError: 
 				print "No hope left for this source, "
 				return i, 0.0, 100.5,100.5,'no_hope',100.5,100.5
@@ -213,7 +217,7 @@ def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),p
 		else:
 			print "NaN in the cutout image: ", head['OBJECT'], ' i = ' , i
 			try:
-				return find_orientation(i,fitsim,ra,dec,nn_ra,nn_dec,nn_dist,maj,s=(2*radius+4)/40./60.,plot=plot,head=head,hdulist=hdulist)
+				return find_orientation(i,fitsim,ra,dec,nn_ra,nn_dec,nn_dist,Min,nn_Min,s=(2*radius+4)/40./60.,plot=plot,head=head,hdulist=hdulist)
 			except RuntimeError: 
 				print "No hope left for this source, "
 				return i, 0.0, 100.5,100.5,'no_hope',100.5,100.5
@@ -254,10 +258,8 @@ def find_orientation(i,fitsim,ra,dec, nn_ra, nn_dec, nn_dist, maj, s = (3/60.),p
 	# 80 per cent of the peak average flux
 	err_orientations = np.where(all_values > (0.8 * max_value))[0]
 	
-	# find the cutoff value, dependent on the distance, should think about whether i want to use Maj
-	# Ill defined cutoff value but is later redefined in merge_value_added_catalog.py
-	# So selection should NOT be done on basis of the 'classification' column
-	cutoff = 2*np.arctan((maj/60.)/nn_dist) * 180 / np.pi # convert rad to deg
+	# find the cutoff value, dependent on the distance, minor axis of both sources 		  # average 
+	cutoff = (2*np.arctan((Min/60.)/(nn_dist/2)) + 2*np.arctan((nn_Min/60.)/(nn_dist/2)) ) /2.   * 180 / np.pi # convert rad to deg
 	if len(err_orientations) > cutoff:
 		classification = 'Large err'
 	else:
@@ -390,10 +392,10 @@ def setup_find_orientation_NN(file,SN=10):
 	A parameters.txt file with the SN and the amount of multiple gaussian sources < 15 error
 
 	'''
-	prefix = '/data1/osinga/data/NN/'
+	prefix = '../source_filtering/NN/'
 	Source_Data = prefix+file+'NearestNeighbours_efficient_spherical2.fits'
 	Source_Name, Mosaic_ID = load_in(Source_Data,'Source_Name', 'Mosaic_ID')
-	RA, DEC, NN_RA, NN_DEC, NN_dist, Total_flux, E_Total_flux, new_NN_index, Maj = load_in(Source_Data,'RA','DEC','new_NN_RA','new_NN_DEC','new_NN_distance(arcmin)','Total_flux', 'E_Total_flux','new_NN_index','Maj')
+	RA, DEC, NN_RA, NN_DEC, NN_dist, Total_flux, E_Total_flux, new_NN_index, Min, NN_Min = load_in(Source_Data,'RA','DEC','new_NN_RA','new_NN_DEC','new_NN_distance(arcmin)','Total_flux', 'E_Total_flux','new_NN_index','Min','new_NN_Min')
 	source = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'+file+'/mosaic.fits'
 
 	source_names = []
@@ -416,7 +418,7 @@ def setup_find_orientation_NN(file,SN=10):
 				if new_NN_index[new_NN_index[i]] == i:
 					unnecessary_indices.append(new_NN_index[i]) # don't have to do the neighbour
 					# important in this function to give the head and hdulist since we do not have little cutouts so this is faster
-					r_index, r_orientation, r_err_orientation, r_amount_of_maxima, r_classification, r_lobe_ratio, r_position_angle = find_orientation(i,'useless',RA[i],DEC[i],NN_RA[i],NN_DEC[i],NN_dist[i],Maj[i],(3/60.),plot=True,head=head,hdulist=hdulist)
+					r_index, r_orientation, r_err_orientation, r_amount_of_maxima, r_classification, r_lobe_ratio, r_position_angle = find_orientation(i,'useless',RA[i],DEC[i],NN_RA[i],NN_DEC[i],NN_dist[i],Min[i],NN_Min[i],(3/60.),plot=False,head=head,hdulist=hdulist)
 					source_names.append(Source_Name[i])
 					orientation.append(r_orientation)
 					err_orientation.append(r_err_orientation)
@@ -434,15 +436,15 @@ def setup_find_orientation_NN(file,SN=10):
 	Mosaic_ID = Mosaic_ID[:len(source_names)]
 	if ( len(source_names) == 0 ):
 		print 'Field Name ' + file + ' has no sources found'
-		F = open('/data1/osinga/data/NN/try_4/'+file+'_parameters.txt','w') 
+		F = open('../source_filtering/NN/'+file+'_parameters.txt','w') 
 		F.write('SN is ' +str(SN))
 		F.write('\namount of sources ' + str(len(source_names)))
 		F.close()
 
 	else:
 		results = Table([source_names,orientation,err_orientation,Mosaic_ID,amount_of_maxima,classification,lobe_ratio,position_angle],names=('Source_Name','orientation (deg)','err_orientation','Mosaic_ID','amount_of_maxima','classification','lobe_ratio','position_angle'))
-		results.write('/data1/osinga/data/NN/try_4/'+file+'_NN.fits',overwrite=True)
-		F = open('/data1/osinga/data/NN/try_4/'+file+'_parameters.txt','w') 
+		results.write('../source_filtering/NN/'+file+'_NN.fits',overwrite=True)
+		F = open('../source_filtering/NN/'+file+'_parameters.txt','w') 
 		F.write('SN is ' +str(SN))
 		F.write('\namount of sources ' + str(len(source_names)))
 		F.close()
@@ -616,41 +618,46 @@ def filter_NN(cutoff=1):
 	'''
 
 	# read in the data from the first iteration
-	filename2 = '/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical1.fits'
-	RAs, DECs, source_names, result_distance = load_in(filename2,'RA','DEC', 'Source_Name','NN_distance(arcmin)')
+	filename2 = '../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical1.fits'
+	RAs, DECs, source_names, result_distance,Mosaic_IDs, Min = load_in(filename2,'RA','DEC', 'Source_Name','NN_distance(arcmin)','Mosaic_ID','Min')
 	# get the RAs and the DEcs of the double-sources
 	doublesRA =  RAs[result_distance < cutoff]
 	doublesDEC = DECs[result_distance < cutoff]
 	doubles_source_names =  source_names[result_distance < cutoff]
+	doubles_Min = Min[result_distance < cutoff]# minor axis of all the doubles
 	# again calculate nearest neighbour for the doubles
-	nearest_neighbour_distance_efficient(doublesRA,doublesDEC,iteration=2,source_names=doubles_source_names,write=True)
+	print ('Total amount of sources left after cutoff value %f arcmin is %i' %(cutoff,len(doublesRA)) )
+	nearest_neighbour_distance_efficient(doublesRA,doublesDEC,iteration=2,source_names=doubles_source_names,MosaicID='notused',write=True,Min=doubles_Min)
 
 	# write the singles to a file
 	singles_source_names =  source_names[result_distance > cutoff]
-	t2 = fits.open('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical1.fits')
+	t2 = fits.open('../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical1.fits')
 	t2 = Table(t2[1].data)
 	singles_source_names = Table([singles_source_names], names=('Source_Name',))
 	# print singles_source_names
 	t2 = join(singles_source_names,t2)
 	t2.sort('Index')
-	t2.write('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical2_singles.fits',overwrite=True)
+	t2.write('../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical2_singles.fits',overwrite=True)
 
-def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=False,p=2):
+def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,MosaicID,write=False,p=2,Min=None):
 	'''
 	This function is faster than the other NN-function with the same functionality. 
-	
-	Input: RAs and DECs of the sources as a numpy array, the iteration and, if iteration = 2
-	also a list of the source_names of the sources corresponding to RA and DEC
-	Iteration is 1 for the first NN search and 2 for the NN search after the cutoff
-	distance
-
 	It computes the nearest neighbour using the Euclidian distance between the points converted
 	to a cartesian system. When the nearest neighbour is found, it computes spherical distance.
 
+	Input: 
+	RAs, DECS -- RAs and DECs of the sources as a numpy array
+	iteration -- The iteration, 1 or 2 (before and after cutoff of 1 arcmin)
+	source_names -- a list of the source_names of the sources corresponding to RA and DEC
+	MosaicID -- the MosaicID that is being done.
+	
+	
+	Output: 
+	three arrays, one with the distance, one with the RA and one with the DEC of the NN
+	The distance is given in arcminutes.
+	
 	Writes to a file if write=True
-
-	Output: three arrays, one with the distance, one with the RA and one with the DEC of the NN
-	The distance is given in arcminutes
+	
 	'''
 	
 	#convert RAs and DECs to an array that has following layout: [[x1,y1,z1],[x2,y2,z2],etc]
@@ -665,7 +672,9 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 	TheResult_distance = []
 	TheResult_RA = []
 	TheResult_DEC = []
-	TheResult_index = []
+	TheResult_index = [] # array with index of nearest neighbour
+	TheResult_source_name = [] # array with Source Name of nearest neighbour.
+	TheResult_NN_Min = [] # array with the minor axis of the nearest neighbour, need it for cutoff
 	for i,item in enumerate(coordinates):
 		'''
 		Find 2nd closest neighbours, since the 1st is the point itself.
@@ -677,6 +686,7 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 		closest neighbour.
 		'''
 		# print coordinates_tree.query(item,k=2,p=2)
+		# index is the index of the nearest neighbour
 		index=coordinates_tree.query(item,k=2,p=2,n_jobs=-1)[1][1]
 		nearestN = [RAs[index],DECs[index]]
 		source = [RAs[i],DECs[i]]
@@ -687,32 +697,38 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 		TheResult_RA.append(nearestN[0])
 		TheResult_DEC.append(nearestN[1])
 		TheResult_index.append(index)
+		TheResult_source_name.append(source_names[index])
+		TheResult_NN_Min.append(Min[index]) # append the minor axis of the nearest neighbour, needed for cutoff
 	
 	if write==True:
 		#we need the source names seperately, so we load in cross_catalog = PYBSDF catalog
 		if iteration == 1:
-			cross_catalog = fits.open(prefix+file+'cat.srl.fits')
-			cross_catalog = Table(cross_catalog[1].data)
-			results =  Table([source_names,TheResult_distance,TheResult_RA,TheResult_DEC,TheResult_index], names=('Source_Name','NN_distance(arcmin)','NN_RA','NN_DEC','NN_index'))
+			srclist = '../LOFAR_HBA_T1_DR1_catalog_v0.9.srl.fixed.fits'
+			srclist = Table(fits.open(srclist)[1].data)
+			cross_catalog = srclist[srclist['Mosaic_ID'] == MosaicID]
+
+			results =  Table([source_names,TheResult_distance,TheResult_RA,TheResult_DEC,TheResult_index,TheResult_source_name], names=('Source_Name','NN_distance(arcmin)','NN_RA','NN_DEC','NN_index','NN_Source_Name'))
 			# for sorting
 			results['Index'] = np.arange(len(TheResult_distance))	
 			results = join(results,cross_catalog,keys='Source_Name')
 			results.sort('Index')
-			results.write('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical'+str(iteration)+'.fits',overwrite=True)
+			results.write('../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical'+str(iteration)+'.fits',overwrite=True)
 
 		elif iteration == 2:
 			#the second iteration we need to keep in mind which sources we use
 			#so we need the source names seperately
-			cross_catalog = fits.open('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical1.fits')
+			cross_catalog = fits.open('../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical1.fits')
 			cross_catalog = Table(cross_catalog[1].data)
-			results = Table([source_names,TheResult_distance,TheResult_RA,TheResult_DEC,TheResult_index], names=('Source_Name','new_NN_distance(arcmin)','new_NN_RA','new_NN_DEC','new_NN_index'))
+
+			results = Table([source_names,TheResult_distance,TheResult_RA,TheResult_DEC,TheResult_index, TheResult_source_name,TheResult_NN_Min]
+				, names=('Source_Name','new_NN_distance(arcmin)','new_NN_RA','new_NN_DEC','new_NN_index', 'new_NN_Source_Name', 'new_NN_Min'))
 			results['new_Index'] = np.arange(len(TheResult_distance)) # we need a new index since we throwing away some of the sources
 			results = join(results,cross_catalog,keys='Source_Name')
 			results.sort('new_Index')
-			results.remove_columns(['NN_distance(arcmin)', 'NN_RA', 'NN_DEC', 'Index', 'NN_index'])
-			results.write('/data1/osinga/data/NN/'+file+'NearestNeighbours_efficient_spherical'+str(iteration)+'.fits',overwrite=True)
+			results.remove_columns(['NN_distance(arcmin)', 'NN_RA', 'NN_DEC', 'Index', 'NN_index','NN_Source_Name'])
+			results.write('../source_filtering/NN/'+file+'NearestNeighbours_efficient_spherical'+str(iteration)+'.fits',overwrite=True)
 		else:
-			raise ValueError ("iteration %d is not implemented yet" % iteration)
+			raise ValueError ("iteration %d is not implemented." % iteration)
 
 		'''
 		So the layout will now be:
@@ -726,28 +742,45 @@ def nearest_neighbour_distance_efficient(RAs,DECs,iteration,source_names,write=F
 
 # ------ nearest neighbour stuff ----------- #
 
+def load_srclist(Mosaic,srclist):
+	"""
+	Given the string Mosaic, loads all the RA, DEC, Source_Name, Mosaic_ID, 
+	Total_flux and E_total_flux from the source_list
+	"""
+	
+	where = srclist['Mosaic_ID'] == Mosaic[:8]
+	RA = srclist['RA'][where]
+	DEC = srclist['DEC'][where]
+	Source_Name = srclist['Source_Name'][where]
+	Mosaic_ID = srclist['Mosaic_ID'][where]
+	Total_flux = srclist['Total_flux'][where]
+	E_total_flux = srclist['E_Total_flux'][where]
+	Min = srclist['Min'][where]
 
+	return RA, DEC, Source_Name, Mosaic_ID, Total_flux, E_total_flux, Min
 
+srclist = '../LOFAR_HBA_T1_DR1_catalog_v0.9.srl.fixed.fits'
+srclist = Table(fits.open(srclist)[1].data)
 
-# the first NN searching
 for file in FieldNames:
-	RAs, DECs, S_Code, Source_Name = load_in(prefix+file+'cat.srl.fits','RA','DEC','S_Code','Source_Name')
-	Total_flux, E_Total_flux = load_in(prefix+file+'cat.srl.fits','Total_flux','E_Total_flux')
+	# load the coordinates one Mosaic at a time.
+	RA, DEC, Source_Name, Mosaic_ID, Total_flux, E_Total_flux, Min = load_srclist(file,srclist)
+
+	initial_length = len(RA)
 	# Will only find the nearest neighbour for SN > 10.
-	initial_length = len(RAs)
-	RAs = RAs[(Total_flux / E_Total_flux) > 10.]
-	DECs = DECs[(Total_flux / E_Total_flux) > 10.]
+	RA = RA[(Total_flux / E_Total_flux) > 10.]
+	DEC = DEC[(Total_flux / E_Total_flux) > 10.]
 	Source_Name = Source_Name[(Total_flux / E_Total_flux) > 10.]
+	Min = Min[(Total_flux / E_Total_flux) > 10.]
 	print file
-	print 'Sources excluded due to Signal to Noise: ', initial_length-len(RAs)
-	nearest_neighbour_distance_efficient(RAs,DECs,iteration=1,source_names=Source_Name,write=True)
-	# the filtering with NN_distance < 1 arcmin and recalculating the NN again for the cutoff
-	filter_NN(cutoff=1)
+	print 'Sources excluded due to Signal to Noise: ', initial_length-len(RA)
+	nearest_neighbour_distance_efficient(RA,DEC,iteration=1,source_names=Source_Name,MosaicID=Mosaic_ID[0],write=True,Min=Min)
+	# the filtering with NN_distance < 0.69 arcmin and recalculating the NN again for the cutoff sample
+	filter_NN(cutoff=0.69)
 	# then finding the orientation.
 	setup_find_orientation_NN(file)
 	
 # finally stacking the catalogs to one big catalog
-sys.path.insert(0, '/data1/osinga/scripts')
 import cross_catalogs_NN
 
 

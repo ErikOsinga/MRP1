@@ -1,0 +1,28 @@
+All scripts are meant to be ran in the directory they are present in.
+
+First run
+
+NN_source_filtering.py 
+multi_gaussian_source_filtering.py
+
+These produce 
+/data1/osinga/value_added_catalog1_1b/source_filtering/NN/all_NN_sources.fits 
+and 
+/data1/osinga/value_added_catalog1_1b/source_filtering/MG/all_multiple_gaussians.fits
+
+Which are, respectively, all the NN sources that made the cut, and all the MG sources that made the cut
+(can be duplicates)
+
+
+Then run 
+
+merge_value_added_catalog.py
+
+Which produces the biggest_selection, and all (ir)relevant subsets of this in 
+
+../value_added_selection.fits
+../value_added_selection_MG.fits 
+
+etc.
+
+

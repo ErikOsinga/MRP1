@@ -23,7 +23,7 @@ def check_em(nn1_distance,nn2_distance):
 	for i in range(0,len(nn1_distance)):
 		
 		if (nn1_distance[i] != nn2_distance[i]):
-			print 'index fout van source met index: ' +str(i)
+			print 'distance fout van source met index: ' +str(i)
 			not_so_bon +=1
 		else:
 			bon += 1
@@ -48,8 +48,10 @@ def load_in(nnpath,*arg):
 
 	return x
 
-nn_inefficient_distance = load_in('/data1/osinga/data/P173+55NearestNeighbours_efficient_old.fits','NN_distance(arcmin)') # the euclidian --> spherical distance
-nn_efficient_distance = load_in('/data1/osinga/data/P173+55NearestNeighbours_efficient_spherical1.fits','NN_distance(arcmin)')# the spherical --> spherical distance
+nn_inefficient_distance = load_in('./P173+55NearestNeighbours.fits','NN_distance(arcmin)') # the spherical double for loop
+# nn_efficient_distance = load_in('/data1/osinga/data/P173+55NearestNeighbours_efficient_spherical1.fits','NN_distance(arcmin)')# the spherical --> spherical distance
+nn_efficient_distance = load_in('./P173+55NearestNeighbours_more_efficient_spherical1.fits','NN_distance(arcmin)')
+
 
 # check_em(nn_inefficient_index,nn_inefficient_distance,nn_efficient_index,nn_efficient_distance)
 # nn_efficienter_index,nn_efficienter_distance = load_in('/data1/osinga/data/P173+55NearestNeighbours_efficient_Spherical_test2.fits')

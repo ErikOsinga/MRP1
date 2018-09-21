@@ -21,7 +21,9 @@ import matplotlib.mlab as mlab
 # sns.set()
 # plt.rc('text', usetex=True)
 
-from utils import angular_dispersion_vectorized_n, load_in, distanceOnSphere
+from utils import (angular_dispersion_vectorized_n, load_in, distanceOnSphere
+	, deal_with_overlap, FieldNames)
+
 from utils_orientation import find_orientationNN, find_orientationMG
 
 import difflib
@@ -38,17 +40,6 @@ filename1 = prefix + file + '/mosaic.fits'
 # image_data = hdu_list[0].data 
 # header = hdu_list[0].header
 # hdu_list.close()
-
-FieldNames = [
-	'P11Hetdex12', 'P173+55', 'P21', 'P8Hetdex', 'P30Hetdex06', 'P178+55', 
-	'P10Hetdex', 'P218+55', 'P34Hetdex06', 'P7Hetdex11', 'P12Hetdex11', 'P16Hetdex13', 
-	'P25Hetdex09', 'P6', 'P169+55', 'P187+55', 'P164+55', 'P4Hetdex16', 'P29Hetdex19', 'P35Hetdex10', 
-	'P3Hetdex16', 'P41Hetdex', 'P191+55', 'P26Hetdex03', 'P27Hetdex09', 'P14Hetdex04', 'P38Hetdex07', 
-	'P182+55', 'P33Hetdex08', 'P196+55', 'P37Hetdex15', 'P223+55', 'P200+55', 'P206+50', 'P210+47', 
-	'P205+55', 'P209+55', 'P42Hetdex07', 'P214+55', 'P211+50', 'P1Hetdex15', 'P206+52',
-	'P15Hetdex13', 'P22Hetdex04', 'P19Hetdex17', 'P23Hetdex20', 'P18Hetdex03', 'P39Hetdex19', 'P223+52',
-	'P221+47', 'P223+50', 'P219+52', 'P213+47', 'P225+47', 'P217+47', 'P227+50', 'P227+53', 'P219+50'
- ]
 
 def plot_hist(normed=False,fit=False):
 	'''
@@ -539,15 +530,21 @@ def copy_cut_NN():
 		two_multi_gauss_1maxima,two_multi_gauss_2maxima,two_multi_gauss_moremaxima)
 	print (lobe_ratio_small_two_maxima,lobe_ratio_big_two_maxima,lobe_ratio_small_more_maxima,lobe_ratio_big_more_maxima)
 
-def select_all_interesting():
+def select_all_interesting(iteration):
 	"""
 	Function to select all sources in the leaves of the tree, so with err < 15 or lobe ratio < 2 etc
+
+	If iteration = 2, it opens the second time we ran our source finding, on the latest catalog.
 	"""
 
-	dataNN = fits.open('/data1/osinga/data/NN/try_4/all_NN_sources.fits')
-	dataNN = Table(dataNN[1].data)
-	dataMG = fits.open('/data1/osinga/data/all_multiple_gaussians2.fits')
-	dataMG = Table(dataMG[1].data)
+	if iteration == 1:
+		dataNN = fits.open('/data1/osinga/data/NN/try_4/all_NN_sources.fits')
+		dataNN = Table(dataNN[1].data)
+		dataMG = fits.open('/data1/osinga/data/all_multiple_gaussians2.fits')
+		dataMG = Table(dataMG[1].data)
+	elif iteration == 2:
+		dataNN = Table(fits.open('/data1/osinga/value_added_catalog/source_filtering/all_NN_sources.fits')[1].data)
+		dataMG = Table(fits.open('/data1/osinga/value_added_catalog/source_filtering/all_multiple_gaussians.fits')[1].data)
 
 	# calculate the cutoff value for the NN, since it wasnt well defined in the source_filtering
 	Min = dataNN['Min']/60. # convert to arcmin
@@ -576,12 +573,12 @@ def hist_PA(tdata,normed=False,fit=False):
 	'''
 
 	fig, ax = plt.subplots()
-	binwidth=20
+	binwidth=5
 	nbins = 180/binwidth
 	position_angles = tdata['position_angle']
 	n, bins, patches = ax.hist(position_angles,bins=nbins,normed=normed,label='Postion Angle')
 	# add a normal distribution fit line by computing mean and stdev
-	# (mu,sigma) = norm.fit(position_angles)
+	(mu,sigma) = norm.fit(position_angles)
 	print 'Mean of the data: {}  \nStandard deviation of the data {} '.format(mu,sigma)
 	if fit==True:
 		if normed == True:
@@ -606,7 +603,7 @@ def uniformCDF(x):
 		return ( (x-a) / (b-a) )
 	return 'error'
 
-def KuiperTest(tdata):
+def KuiperTest(tdata,plot=False):
 	'''
 	Calculates the Kuiper statistic for a distribution of position angles 
 	versus the uniform distribution. 
@@ -623,7 +620,7 @@ def KuiperTest(tdata):
 	plt.plot(X,z)
 
 	binwidth=1
-	nbins = 180/binwidth
+	nbins = 180//binwidth
 	position_angles = tdata['position_angle']
 	# for normalising the histogram, weighing each bin with the number of values
 	# weights = np.asarray(np.ones_like(position_angles)/float(len(position_angles)))
@@ -638,16 +635,18 @@ def KuiperTest(tdata):
 	D_plus = np.max(cdf-z)
 	D_minus = np.max(z-cdf)
 	V = D_plus + D_minus
-	print V
+	print (V)
 
-	plt.plot(X,z,label='Uniform distribution')
-	plt.plot(cdf, label='Data') 
-	plt.title('Comparison of CDFs, kuiper statistic: ' +str(V))
-	plt.xlabel('Position angle (degrees)')
-	plt.ylabel('Probability')
-	plt.legend()
-	plt.show()
+	if plot:
+		plt.plot(X,z,label='Uniform distribution')
+		plt.plot(cdf, label='Data') 
+		plt.title('Comparison of CDFs, kuiper statistic: ' +str(V))
+		plt.xlabel('Position angle (degrees)')
+		plt.ylabel('Probability')
+		plt.legend()
+		plt.show()
 
+	return V
 def angular_size(tdataNN,tdataMG):
 	'''
 	Makes a histogram of the angular size distribution of sources
@@ -1055,28 +1054,6 @@ def show_overlap(tdata):
 
 		find_orientationMG(j,'',RA[j],DEC[j],Maj[j],Min[j],(3/60.),plot=True,head=head,hdulist=hdulist)
 
-def deal_with_overlap(tdata):
-	"""
-	If there are non-unique sources in tdata, remove the NN source from the data.
-
-	Non-unique sources show up because we select first on NN and then on the MG 
-	but this might cause overlap between the two..
-	"""
-
-	source_names, counts = np.unique(tdata['Source_Name'],return_counts=True)
-	# array with the non-unique source names
-	source_names = source_names[counts>1] 
-	drop_rows = []
-	for i in range(len(source_names)):
-		nonunique = np.where(tdata['Source_Name'] == source_names[i])
-		i = nonunique[0][0] # NN source 
-		j = nonunique[0][1] # MG source
-		drop_rows.append(i)
-
-	tdata.remove_rows(drop_rows)
-
-	return tdata
-
 def make_bins():
 	"""
 	Calls the select_size_bins2 and select_flux_bins2 and produces the .fits files
@@ -1098,16 +1075,70 @@ def make_bins():
 		size_data.write('./size_bins2_'+str(i)+'.fits',overwrite=True)
 		flux_data.write('./flux_bins2_'+str(i)+'.fits',overwrite=True)
 
+def fix_data_latest():
+	"""
+	After initial source filtering, deal with overlap.
+	"""
+
+
+	dataNN_l, dataMG_l = select_all_interesting(iteration=2)
+	tdata_latest = vstack([dataNN_l,dataMG_l])
+	# Write it so nans appear in the MG columns
+	tdata_latest.write('/data1/osinga/value_added_catalog/source_filtering/biggest_selection_latest.fits',overwrite=True)
+	# Open it again
+	tdata_latest = Table(fits.open('/data1/osinga/value_added_catalog/source_filtering/biggest_selection_latest.fits')[1].data)
+	# Deal with the overlapping sources.
+	tdata_latest = deal_with_overlap(tdata_latest)
+	tdata_latest.write('/data1/osinga/value_added_catalog/source_filtering/biggest_selection_latest.fits',overwrite=True)
 
 
 
-dataNN,dataMG = select_all_interesting()
-tdata = vstack([dataNN,dataMG])
+def NN_excluded_by_MG_statistics():
+	tdata = Table(fits.open('../NN_excluded_by_also_being_MG_classification.fits')[1].data)
+	
+	# for some reason spaces were added
+	MG = np.where(tdata['classification'] == 'MG          ')
+	NN = np.where(tdata['classification'] == 'NN          ')
+	unclassified = np.where(tdata['classification'] == 'unclassified')
+
+	tdata_shouldbe_MG = tdata[MG]
+	tdata_shouldbe_NN = tdata[NN]
+	tdata_unclassified = tdata[unclassified]
+
+	print ('MG',len(tdata_shouldbe_MG))
+	print ('NN',len(tdata_shouldbe_NN))
+	print ('excluded',len(tdata_unclassified))
+
+	print ('percentages:')
+	print (len(tdata_shouldbe_MG)/float(len(tdata)))
+	print (len(tdata_shouldbe_NN)/float(len(tdata)))
+	print (len(tdata_unclassified)/float(len(tdata)))
+
+
+
+
+
+# Too old to work. Used to work for biggest_selection.
+# dataNN,dataMG = select_all_interesting(iteration=1)
+# tdata = vstack([dataNN,dataMG])
+# tdata2 = deal_with_overlap(tdata)
+
+# tdata_latest = Table(fits.open('/data1/osinga/value_added_catalog/source_filtering/biggest_selection_latest.fits')[1].data)
+
+# VA_bs = '/data1/osinga/value_added_catalog/value_added_biggest_selection.fits'
+# VA_bs = Table(fits.open(VA_bs)[1].data)
+
+# BS_no_VA = Table(fits.open('/data1/osinga/value_added_catalog/not_in_VA_biggest_selection.fits')[1].data)
+# hist_PA(BS_no_VA[np.invert(np.isnan(BS_no_VA['new_NN_RA']))])
+
+# plt.hist(dataMG_l['PA'])
+# plt.show()
 
 # file = '/data1/osinga/data/flux_bins2/flux_bins2_4.fits'  #'/data1/osinga/data/biggest_selection.fits'
 # fluxdata = Table(fits.open(file)[1].data)
 
-tdata2 = deal_with_overlap(tdata)
+
+# hist_PA(tdata2)
 
 # make_bins()
 

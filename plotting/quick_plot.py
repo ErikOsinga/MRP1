@@ -22,26 +22,15 @@ import matplotlib.mlab as mlab
 # plt.rc('text', usetex=True)
 
 import pyfits as pf
+import pywcs as pw
 
 from utils import (angular_dispersion_vectorized_n, distanceOnSphere, load_in
-					, rotate_point, PositionAngle, deal_with_overlap)
+					, rotate_point, PositionAngle, deal_with_overlap, deal_with_overlap_2, FieldNames, tableMosaic_to_full)
 from utils_orientation import find_orientationNN, find_orientationMG
 
 import difflib
 
 # import treecorr
-
-FieldNames = [
-	'P11Hetdex12', 'P173+55', 'P21', 'P8Hetdex', 'P30Hetdex06', 'P178+55', 
-	'P10Hetdex', 'P218+55', 'P34Hetdex06', 'P7Hetdex11', 'P12Hetdex11', 'P16Hetdex13', 
-	'P25Hetdex09', 'P6', 'P169+55', 'P187+55', 'P164+55', 'P4Hetdex16', 'P29Hetdex19', 'P35Hetdex10', 
-	'P3Hetdex16', 'P41Hetdex', 'P191+55', 'P26Hetdex03', 'P27Hetdex09', 'P14Hetdex04', 'P38Hetdex07', 
-	'P182+55', 'P33Hetdex08', 'P196+55', 'P37Hetdex15', 'P223+55', 'P200+55', 'P206+50', 'P210+47', 
-	'P205+55', 'P209+55', 'P42Hetdex07', 'P214+55', 'P211+50', 'P1Hetdex15', 'P206+52',
-	'P15Hetdex13', 'P22Hetdex04', 'P19Hetdex17', 'P23Hetdex20', 'P18Hetdex03', 'P39Hetdex19', 'P223+52',
-	'P221+47', 'P223+50', 'P219+52', 'P213+47', 'P225+47', 'P217+47', 'P227+50', 'P227+53', 'P219+50'
- ]
-
 
 def hist_n(Sn_data,mcdata,n=35):
 
@@ -289,7 +278,7 @@ def plot_source_finding(NN,file,source_name,plot=False):
 		try: 
 			error = find_orientationNN(i,'',RA[i],DEC[i],NN_RA[i],NN_DEC[i],NN_dist[i],Maj[i],(3/60.),plot=plot,head=head,hdulist=hdulist)[-1]
 		except UnboundLocalError:
-			error = 10e6
+			error = [10e6,10e6]
 
 	else:
 		prefix = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/CATALOG-DISTRIBUTED-24072017/'
@@ -309,7 +298,7 @@ def plot_source_finding(NN,file,source_name,plot=False):
 		try:
 			error = find_orientationMG(i,'',RA[i],DEC[i],Maj[i],Min[i],(3/60.),plot=plot,head=head,hdulist=hdulist)[-1]
 		except UnboundLocalError: # means only 1 maximum in the min and max orientation angle
-			error = 10e6
+			error = [10e6,10e6]
 
 	return error
 
@@ -341,6 +330,10 @@ def setup_source_finding(source_name):
 	NN = np.isnan(source['new_NN_distance(arcmin)'])^1
 
 	error = plot_source_finding(NN,MosaicID,source_name,False)
+	errorRA = error[0]
+	errorDEC = error[1]
+
+	return errorRA, errorDEC
 
 def bins():
 	"""
@@ -400,25 +393,202 @@ def bins():
 		plt.savefig('./fluxdist_size2_'+str(i))
 		plt.close()
 
+def something_with_errorprop():
+	all_errorRA = []
+	all_errorDEC = []
+	for i in range(len(tdata)):
+		# source_name = 'ILTJ113636.138+480928.25'
+		source_name = tdata['Source_Name'][i]
+		errorRA, errorDEC = setup_source_finding(source_name)
+		if errorRA < 10e6:
+			all_errorRA.append(errorRA)
+			all_errorDEC.append(errorDEC)
+
+	print np.median(all_errorRA)
+	print np.mean(all_errorRA)
+
+	print '\n'
+
+	print np.median(all_errorDEC)
+	print np.mean(all_errorDEC)
+
+def plot_source_finding_latest_catalog(NN,file,source_name,plot=False):
+	"""
+	Plots the orientation finding for a single source.
+
+	Arguments:
+	NN -- Bool indicating if we want an NN source or MG source
+	file -- Fieldname the source is in
+	source_name -- name of the source in the Table 
+	plot -- whether to plot. 
+
+	"""
+
+	if NN:
+		# file = 'P3Hetdex16'
+		# i = 334
+		
+		prefix = '/data1/osinga/value_added_catalog_1_1b_thesis/source_filtering/NN/'
+		Source_Data = prefix+file+'NearestNeighbours_efficient_spherical2.fits'
+		Source_Name, Mosaic_ID = load_in(Source_Data,'Source_Name', 'Mosaic_ID')
+		RA, DEC, NN_RA, NN_DEC, NN_dist, Total_flux, E_Total_flux, new_NN_index, Min, NN_Min = load_in(Source_Data,'RA','DEC','new_NN_RA','new_NN_DEC','new_NN_distance(arcmin)','Total_flux', 'E_Total_flux','new_NN_index','Min','new_NN_Min')
+		source = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'+file+'/mosaic.fits'
+		head = pf.getheader(source)
+		hdulist = pf.open(source)
+
+		i = np.where(Source_Name == source_name)[0][0]
+
+		print Source_Name[i], 'Nearest Neighbour source'
+		print RA[i],DEC[i]
+
+		wcs = pw.WCS(hdulist[0].header)
+		skycrd = np.array([[RA[i],DEC[i],0,0]], np.float_)
+		pixel = wcs.wcs_sky2pix(skycrd, 1)
+
+		# Some pixel coordinates of interest.
+		x = int(pixel[0][0])
+		y = int(pixel[0][1])
+		rad = 60
+		# plt.imshow((fits.open(source)[0].data)[x-rad:x+rad,y-rad:y+rad],origin='lower')
+		# plt.show()
+		try: 
+			error = find_orientationNN(i,source,RA[i],DEC[i],NN_RA[i],NN_DEC[i],NN_dist[i],Min[i],NN_Min[i],(3/60.),plot=plot,head=head,hdulist=hdulist)[-1]
+		except UnboundLocalError:
+			error = [10e6,10e6]
+
+	else:
+		Source_Data = '/data1/osinga/value_added_catalog1_1b/LOFAR_HBA_T1_DR1_catalog_v0.9.srl.fixed.fits'
+		Source_Name, S_Code, Mosaic_ID = load_in(Source_Data,'Source_Name', 'S_Code', 'Mosaic_ID')
+		RA, DEC, Maj, Min, Total_flux , E_Total_flux = load_in(Source_Data,'RA','DEC', 'Maj', 'Min', 'Total_flux', 'E_Total_flux')
+
+		multiple_gaussian_indices = (np.where(S_Code == 'M')[0])
+
+		source = '/disks/paradata/shimwell/LoTSS-DR1/mosaic-April2017/all-made-maps/mosaics/'+file+'/mosaic.fits'
+		head = pf.getheader(source)
+		hdulist = pf.open(source)
+
+		i = np.where(Source_Name == source_name)[0][0]
+
+		wcs = pw.WCS(hdulist[0].header)
+		skycrd = np.array([[RA[i],DEC[i],0,0]], np.float_)
+		pixel = wcs.wcs_sky2pix(skycrd, 1)
+		# Some pixel coordinates of interest.
+		x = int(pixel[0][0])
+		y = int(pixel[0][1])
+		
+		print Source_Name[i], 'MG source'
+		print RA[i],DEC[i]
+
+		try:
+			error = find_orientationMG(i,source,RA[i],DEC[i],Maj[i],Min[i],(3/60.),plot=plot,head=head,hdulist=hdulist)[-1]
+		except UnboundLocalError: # means only 1 maximum in the min and max orientation angle
+			error = [10e6,10e6]
+
+	return error
+
+def check_NN_vs_MG():
+	"""
+	Shows the NN and MG source finding algorithms for all the overlapping (with the NN) sources in the latest biggest_selection
+	aka, finds the sources whose nearest neighbour are also classified as a legit MG source.
+	"""
+
+	tdata = Table(fits.open('/data1/osinga/value_added_catalog/source_filtering/biggest_selection_latest.fits')[1].data)
+	# plot_source_finding_latest_catalog(True,'P11Hetdex12','ILTJ113503.51+482613.9',plot=True) # the source that is NN and MG (the other way around)
+	
+	all_names, all_indices, mosaic_ids, _ = deal_with_overlap_2(tdata)
+
+	for i in range(len(all_names)):
+		print '\n %i' % i
+		plot_source_finding_latest_catalog(True,tableMosaic_to_full(mosaic_ids[i]),all_names[i],plot=True) # NN
+		plot_source_finding_latest_catalog(False,tableMosaic_to_full(mosaic_ids[i]),all_names[i],plot=True) # MG
+
+def selection_no_valueadded():
+	"""	 Plot all the sources that do not exist in the value-added catalog"""
+	# All the sources that are in the biggest_selection but not in the value added catalog
+	BS_no_VA = Table(fits.open('/data1/osinga/value_added_catalog/not_in_VA_biggest_selection.fits')[1].data)
+
+	# Boolean indicating NN or MG source
+	NN = np.invert(np.isnan(BS_no_VA['new_NN_RA']))
+	print np.where(NN == False)
+	print 'Number of NN sources: %i' % np.sum(NN)
+	for i in range(749,len(BS_no_VA)):
+		# i = np.random.randint(0,len(BS_no_VA))
+		print i
+		plot_source_finding_latest_catalog(NN[i],tableMosaic_to_full(BS_no_VA['Mosaic_ID'][i])
+			,BS_no_VA['Source_Name'][i],plot=True)
+
+
 
 if __name__ == '__main__':
-	# bins()
-	# plot_flux_bins2_4()
+	# selection_no_valueadded()
 
-	tdata = Table(fits.open('/data1/osinga/data/monte_carlo/biggest_selection.fits')[1].data)
-	tdata = deal_with_overlap(tdata)
+	# file = '/data1/osinga/value_added_catalog1_1b/value_added_selection.fits'
+	# file = '/data1/osinga/value_added_catalog_1_1b_thesis_cutoff069/value_added_selection.fits'
+	# file = '/data1/osinga/value_added_catalog_1_1b_thesis_cutoff069/value_added_selection_MG.fits'
+	# file = '/data1/osinga/value_added_catalog_1_1b_thesis_cutoff069/biggest_selection_with_overlap.fits'
+	file = '/data1/osinga/value_added_catalog_1_1b_thesis_cutoff069/source_filtering/all_NN_sources.fits' #
+	tdata = Table(fits.open(file)[1].data)
+	tdata['Source_Name_1'] = tdata['Source_Name']
+	tdata['Source_Name'] = tdata['Source_Name_1']
+	tdata['PA_1'] = tdata['PA']
+	tdata['final_PA'] = tdata['position_angle']
+	NN = np.invert(np.isnan(tdata['new_NN_RA']))
+	# iis = [5744, 5743, 6317, 6316, 5849, 5850, 6583, 6584, 4101, 4100]
+	
+	# all 39 source name1s that are NN and have the wrong components
+	# iis = ['ILTJ104730.34+530706.5', 'ILTJ105800.45+484339.6', 'ILTJ105956.46+483410.5', 'ILTJ110015.47+471048.8', 'ILTJ110718.36+504812.0', 'ILTJ110936.24+510320.0', 'ILTJ112205.56+484429.8', 'ILTJ112749.69+531707.6', 'ILTJ113908.87+553941.0', 'ILTJ113957.84+540808.7', 'ILTJ114915.54+482408.6', 'ILTJ120900.69+464147.4', 'ILTJ120954.18+491224.1', 'ILTJ121726.95+484557.2', 'ILTJ122938.96+501137.2', 'ILTJ124139.51+543859.9', 'ILTJ124229.23+502822.4', 'ILTJ124754.90+514359.8', 'ILTJ125822.71+534315.1', 'ILTJ130109.26+510620.8', 'ILTJ130647.79+463345.5', 'ILTJ130850.67+543820.5', 'ILTJ131251.93+471440.2', 'ILTJ132219.83+495805.6', 'ILTJ132418.13+492636.1', 'ILTJ132642.48+495214.7', 'ILTJ133121.62+554055.9', 'ILTJ133359.24+480410.3', 'ILTJ133637.18+533143.9', 'ILTJ134110.72+512125.3', 'ILTJ134153.00+474005.9', 'ILTJ134706.34+534003.2', 'ILTJ141842.68+542241.1', 'ILTJ142437.53+480513.3', 'ILTJ143647.77+474658.0', 'ILTJ144258.31+502421.7', 'ILTJ144818.16+563622.6', 'ILTJ145018.89+473630.5', 'ILTJ150118.14+471717.8']
+	# investigate componentmatch PA vs Position angle
+	# iis = ['ILTJ110011.82+484820.2','ILTJ111430.49+520441.5','ILTJ110306.76+562754.4','ILTJ110037.08+502724.0']
+	# iis = ['ILTJ104936.51+471412.8']
+	# iis = ['ILTJ105020.88+474223.3']
+
+
+	# iis = ['ILTJ105036.49+532219.0'] # NNalgorithm.pdf (v1)
+	iis = ['ILTJ135100.92+474938.1'] #NNalgorithm_v2.pdf
+	# iis = ['ILTJ134706.37+482807.6'] # MGalgorithm.pdf
+
+
+	# err_orientation cutoff showing rejected sources
+	# tdata = Table(fits.open('../NN_excluded_by_orientation_cutoff.fits')[1].data)
+	# iis = ['ILTJ113321.20+470144.7','ILTJ113055.16+483650.4','ILTJ112538.30+465258.2'] # err_orientation cutoff
+	# iis = tdata['Source_Name']
+	# tdata['PA_1'] = tdata['PA']
+	# NN = np.invert(np.isnan(tdata['new_NN_RA']))
+
+	# NN sources that are excluded because they are also good MG sources.
+	# tdata = Table(fits.open('../NN_excluded_by_also_being_MG.fits')[1].data)
+	# iis = tdata['Source_Name']
+	# tdata['PA_1'] = tdata['PA']
+
+	# iis = ['ILTJ110226.26+534327.3']
+
+
+	# iis = ['ILTJ110005.66+530118.3','ILTJ110005.49+530116.9']
+	# iis = ['ILTJ131441.36+473224.6','ILTJ131441.47+473213.3'] # source to remove after distance check
+	# source to remove after VA catalog merge and then distance check
+	# iis = ['ILTJ142701.92+554824.3','ILTJ142701.70+554817.3'] 
+											
+
+	# Bright sources
+	# tdata = tdata[tdata['Peak_flux_2'] > 9.41]
+
+	# Faint sources
+	# tdata = tdata[tdata['Peak_flux_2'] < 3]
+	# iis = tdata['Source_Name']
+
+	for i in iis:
+		i = np.where(tdata['Source_Name'] == i)[0][0]
+		mosaicid = tdata['Mosaic_ID'][i]
+
+		print 'PA_1: %f, position_angle: %f' %(tdata['PA_1'][i],tdata['position_angle'][i])
+		# print tdata['Mosaic_ID'][i]
+		mosaicid = tableMosaic_to_full(tdata['Mosaic_ID'][i])
+		plot_source_finding_latest_catalog(NN[i],mosaicid,tdata['Source_Name'][i],plot=True)
+		
+		# for NN excluded by also being MG
+		# plot_source_finding_latest_catalog(True,mosaicid,tdata['Source_Name'][i],plot=True)
 
 	# setup_source_finding('ILTJ113337.273+465836.71')
 
 	# plot_source_finding(False,'P1Hetdex15','ILTJ135210.962+480947.16') # the source with interesting flux vs orientation. 
 
-	all_error = []
-	for i in range(len(tdata)):
-		# source_name = 'ILTJ113636.138+480928.25'
-		source_name = tdata['Source_Name'][i]
-		error = setup_source_finding(source_name)
-		if error < 10e6:
-			all_error.append(error)
-
-	print np.median(all_error)
-	print np.mean(all_error)
